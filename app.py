@@ -1,0 +1,73 @@
+import streamlit as st
+import pandas as pd
+import requests
+import os
+import shutil
+import zipfile
+import tempfile
+
+st.set_page_config(page_title="Image Downloader", layout="centered")
+
+# Company Logo at the top
+st.image("https://sandnetwork.in/wp-content/uploads/2024/02/sand-logo.png", width=200)
+
+
+
+def download_images(df, base_url, folder_column, output_root):
+    log_messages = []
+    for index, row in df.iterrows():
+        folder_name = str(row[folder_column]).strip().replace(' ', '_')
+        photo_name = str(row['PHOTOURL']).strip()
+        full_url = f"{base_url}/{photo_name}"
+
+        folder_path = os.path.join(output_root, folder_name)
+        os.makedirs(folder_path, exist_ok=True)
+        output_path = os.path.join(folder_path, photo_name)
+
+        try:
+            response = requests.get(full_url, stream=True)
+            if response.status_code == 200:
+                with open(output_path, 'wb') as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+                log_messages.append(f"✅ {photo_name} → {folder_name}")
+            else:
+                log_messages.append(f"❌ Failed: {photo_name} (Status {response.status_code})")
+        except Exception as e:
+            log_messages.append(f"❗ Error with {photo_name}: {e}")
+    return log_messages, output_root
+
+def zip_folder(folder_path):
+    zip_path = f"{folder_path}.zip"
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, folder_path)
+                zipf.write(file_path, arcname)
+    return zip_path
+
+# --- Streamlit App UI ---
+st.title("📸 Image Downloader from Excel")
+st.markdown("Upload Excel file, enter URL, and download images grouped into folders – zipped and downloadable here.")
+
+uploaded_file = st.file_uploader("Upload Excel file (.xls or .xlsx)", type=["xls", "xlsx"])
+base_url = st.text_input("Enter base image URL", value="https://app.sandnetwork.in/imagesapp/projectdata_220")
+folder_column = st.text_input("Enter column name to group images into folders", value="Village")
+
+if st.button("Start Download") and uploaded_file:
+    with st.spinner("Processing and downloading images..."):
+        try:
+            df = pd.read_excel(uploaded_file)
+            if 'PHOTOURL' not in df.columns or folder_column not in df.columns:
+                st.error("Excel must contain 'PHOTOURL' and the selected folder column!")
+            else:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    logs, output_path = download_images(df, base_url, folder_column, output_root=tmpdir)
+                    zip_path = zip_folder(output_path)
+                    
+                    st.success("🎉 Download complete! Download your zipped images below.")
+                    st.download_button("📦 Download ZIP", data=open(zip_path, "rb"), file_name="images_download.zip", mime="application/zip")
+                    st.text_area("Log", "\n".join(logs), height=300)
+        except Exception as e:
+            st.error(f"Error: {e}")
